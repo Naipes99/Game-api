@@ -4,6 +4,7 @@ import { SequelizeModule } from '@nestjs/sequelize'
 import { envs } from './config/envs';
 import { Sequelize } from 'sequelize';
 import { rejects } from 'assert';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [GamsModule, 
@@ -24,7 +25,7 @@ import { rejects } from 'assert';
           rejectUnauthorized: false,
         }
       }
-    })
+    }), UsersModule
   ],
   controllers: [],
   providers: [],

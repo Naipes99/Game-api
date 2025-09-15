@@ -3,6 +3,8 @@ import { CreateGamDto, GameState } from './dto/create-gam.dto';
 import { UpdateGamDto } from './dto/update-gam.dto';
 import { Game } from './entities/gam.entity';
 import { InjectModel } from '@nestjs/sequelize';
+import { User } from 'src/users/entities/user.entity';
+import { UsersService } from 'src/users/users.service';
 
 @Injectable()
 export class GamsService {
@@ -12,19 +14,25 @@ export class GamsService {
   constructor(
     @InjectModel(Game)
     private gameModel: typeof Game,
+    private readonly userServise: UsersService,
   ){}
 
   async create(createGamDto: CreateGamDto) {
-    const { name, maxPlayers, playerName, state } = createGamDto
+    const { name, maxPlayers, userId, state } = createGamDto
    try {
-     const newGame = await this.gameModel.create({
+    const newGame = await this.gameModel.create({
       name: name,
       maxPlayers: maxPlayers,
-      players: [playerName],
-      state: state || 'waiting',
+      state: state || 'waiting',       
       score: null,
-    })
+    });
+
+   if (userId){
+      const user = await this.userServise.findOne(userId); 
+      await newGame.$add('players', user);
+    }
     return newGame;
+
    } catch (error) {
     this.handleDBException(error);
    }
@@ -34,7 +42,17 @@ export class GamsService {
     const game = await this.gameModel.findOne({
       where:{
         id: id,
-      }
+      },
+      include:[
+        {
+          model: User,
+          as: 'players',
+          attributes:['id', 'fullname', 'email'],
+          through:{
+            attributes: [],
+          },
+        },
+      ],
     });
     if(!game){
       throw new BadRequestException(`Game id ${id} not found` );
@@ -42,30 +60,33 @@ export class GamsService {
     return game;
   }
 
-  async joinGame(id: number, updateGamDto: UpdateGamDto) {
-    const { playerName } = updateGamDto;
-    const game = await this.findOne(id);
+  async joinGame(gameId: number, updateGamDto: UpdateGamDto) {
+    const { userId } = updateGamDto;
+    if(!userId) 
+      throw new BadRequestException('User ID is necesary to join');    
     
-    if(game.dataValues.players.includes(playerName!)){
-      throw new BadRequestException('Player has already joined!')
-    }
-    
-    const newPlayers = [...game.dataValues.players, playerName];
-  
-    if(newPlayers.length > game.dataValues.maxPlayers){
-      throw new BadRequestException('game is full!')
-    }
-    
-    try {
-      await game.update({
-        players: newPlayers,
-      })
-      return{
-        message: 'Player has joined!',
-      }
-    } catch (error) {
-      this.handleDBException(error);
-    }
+    const game = await this.findOne(gameId);
+
+    if (game.dataValues.state !== GameState.WAITING) 
+      throw new BadRequestException('Game is not available to join');
+
+    const user = await this.userServise.findOne(userId);
+
+    const alreadyJoined = game.dataValues.players.find((player)=>player.id === userId);
+    if(alreadyJoined) 
+      throw new BadRequestException('Player already joined the game');
+
+    if(game.dataValues.players.length>=game.dataValues.maxPlayers) 
+      throw new BadRequestException('Game is full');
+
+    if(user.dataValues.GameState === GameState.IN_PROGRESS, GameState.WAITING)
+      throw new BadRequestException('User is not available to join');
+
+    await game.$add('players', user);
+
+    return {
+      message: `User ${user.dataValues.fullname} has joined the game ${game.dataValues.name}`,
+    };
   }
 
   async startGame(id: number, updateGamDto: UpdateGamDto){
